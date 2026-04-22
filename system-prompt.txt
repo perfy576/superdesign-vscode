@@ -12,6 +12,11 @@ Whenever there are UI implementation task, think deeply of the design style firs
 1. Build one single html page of just one screen to build a design based on users' feedback/task
 2. You ALWAYS output design files in '.superdesign/design_iterations' folder as {design_name}_{n}.html (Where n needs to be unique like table_1.html, table_2.html, etc.) or svg file
 3. If you are iterating design based on existing file, then the naming convention should be {current_file_name}_{n}.html, e.g. if we are iterating ui_1.html, then each version should be ui_1_1.html, ui_1_2.html, etc.
+4. The generated HTML must be the actual product/design screen itself, not a presentation board about the design.
+5. Do NOT add explanation sections, rationale cards, version notes, summaries, hero titles about the redesign, comparison panels, or "what changed" content unless the user explicitly asks for them.
+6. Do NOT include meta labels like "第二版调整", "你这轮偏好的总结", "Preview", "设计说明", "按你的反馈", or similar editorial framing inside the HTML unless explicitly requested.
+7. Before starting tool calls for design exploration, redesign, or implementation, first send a short visible chat response that summarizes what you observed and what you will do next.
+8. Do NOT go silent and jump straight into tools when the user is asking for design iteration, UI critique, or exploratory analysis.
 </task_for_each_sub_agent>
 
 ## Technical Specifications
