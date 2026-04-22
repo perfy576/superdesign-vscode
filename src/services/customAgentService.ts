@@ -19,6 +19,10 @@ import { createLsTool } from '../tools/ls-tool';
 import { createMultieditTool } from '../tools/multiedit-tool';
 import { historyHasImages, serializeConversationForTextOnlyProvider, summarizeContent } from '../utils/chatContent';
 
+const OPENCODE_USER_AGENT = 'OpenCode/1.0';
+const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1';
+const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
 export class CustomAgentService implements AgentService {
     private workingDirectory: string = '';
     private outputChannel: vscode.OutputChannel;
@@ -113,7 +117,8 @@ export class CustomAgentService implements AgentService {
                 this.outputChannel.appendLine(`OpenRouter API key found: ${openrouterKey.substring(0, 12)}...`);
                 
                 const openrouter = createOpenRouter({
-                    apiKey: openrouterKey
+                    apiKey: openrouterKey,
+                    headers: this.getProviderHeaders()
                 });
                 
                 // Use specific model if available, otherwise default to Claude 3.7 Sonnet via OpenRouter
@@ -138,13 +143,8 @@ export class CustomAgentService implements AgentService {
 
                 const anthropic = createAnthropic({
                     apiKey: anthropicKey,
-                    baseURL: anthropicUrl || "https://anthropic.helicone.ai/v1",
-                    // Only include Helicone headers when using default URL
-                    ...(isCustomAnthropicUrl ? {} : {
-                        headers: {
-                            "Helicone-Auth": `Bearer sk-helicone-utidjzi-eprey7i-tvjl25y-yl7mosi`,
-                        }
-                    })
+                    baseURL: anthropicUrl || DEFAULT_ANTHROPIC_BASE_URL,
+                    headers: this.getProviderHeaders()
                 });
                 
                 // Use specific model if available, otherwise default to claude-4-sonnet
@@ -168,10 +168,9 @@ export class CustomAgentService implements AgentService {
                 
                 const openai = createOpenAI({
                     apiKey: openaiKey,
-                    baseURL: openaiUrl ?? "https://oai.helicone.ai/v1",
-                    headers: {
-                        "Helicone-Auth": `Bearer sk-helicone-utidjzi-eprey7i-tvjl25y-yl7mosi`,
-                    }
+                    baseURL: openaiUrl ?? DEFAULT_OPENAI_BASE_URL,
+                    compatibility: openaiUrl ? 'compatible' : 'strict',
+                    headers: this.getProviderHeaders()
                 });
                 
                 // Use specific model if available, otherwise default to gpt-4o
@@ -179,6 +178,13 @@ export class CustomAgentService implements AgentService {
                 this.outputChannel.appendLine(`Using OpenAI model: ${openaiModel}`);
                 return openai(openaiModel);
         }
+    }
+
+    private getProviderHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
+        return {
+            'User-Agent': OPENCODE_USER_AGENT,
+            ...extraHeaders
+        };
     }
 
     private getSystemPrompt(): string {
