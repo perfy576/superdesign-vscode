@@ -224,8 +224,8 @@
         },
         "superdesign.userAgent": {
           "type": "string",
-          "default": "codex-tui/0.121.0 (Windows 10.0.19045; x86_64) WezTerm/20240203-110809-5046fc22 (codex-tui; 0.121.0)",
-          "description": "自定义请求头 User-Agent。留空则使用默认的 Codex 标识",
+          "default": "",
+          "description": "自定义请求头 User-Agent。留空时不覆盖默认请求头；如需模拟 Codex，可手动填入对应标识",
           "scope": "application"
         },
         "superdesign.aiModelProvider": {

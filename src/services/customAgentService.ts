@@ -19,7 +19,6 @@ import { createLsTool } from '../tools/ls-tool';
 import { createMultieditTool } from '../tools/multiedit-tool';
 import { historyHasImages, serializeConversationForTextOnlyProvider, summarizeContent } from '../utils/chatContent';
 
-const DEFAULT_CODEX_USER_AGENT = 'codex-tui/0.121.0 (Windows 10.0.19045; x86_64) WezTerm/20240203-110809-5046fc22 (codex-tui; 0.121.0)';
 const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1';
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 
@@ -184,8 +183,12 @@ export class CustomAgentService implements AgentService {
         const config = vscode.workspace.getConfiguration('superdesign');
         const configuredUserAgent = config.get<string>('userAgent')?.trim();
 
+        if (!configuredUserAgent) {
+            return { ...extraHeaders };
+        }
+
         return {
-            'User-Agent': configuredUserAgent || DEFAULT_CODEX_USER_AGENT,
+            'User-Agent': configuredUserAgent,
             ...extraHeaders
         };
     }
