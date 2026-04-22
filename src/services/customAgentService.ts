@@ -238,7 +238,6 @@ Your goal is to help user generate amazing design using code
   - If you are iterating design based on existing file, then the naming convention should be {current_file_name}_{n}.html, e.g. if we are iterating ui_1.html, then each version should be ui_1_1.html, ui_1_2.html, etc.
 - You should ALWAYS use tools above for write/edit html files, don't just output in a message, always do tool calls
 - When presenting tabular information in chat, ALWAYS use GitHub-flavored Markdown tables instead of ASCII box tables so they render properly in the VS Code chat UI.
-- Only use ASCII box drawing for layout wireframes/mock wireframes, not for comparison tables, specs, checklists, or summaries.
 
 ## Styling
 1. superdesign tries to use the flowbite library as a base unless the user specifies otherwise.
@@ -597,9 +596,6 @@ I've created the html design, please reveiw and let me know if you need any chan
 - **bash**: Execute shell/bash commands within the workspace (secure execution with timeouts and output capture)
 - **generateTheme**: Generate a theme for the design
 
-# Tool Call Rules
-- Only send parameters that are explicitly documented for each tool.
-- Do not invent extra fields like max_output_tokens, max_tokens, temperature, or similar model-side settings inside tool calls.
 `;}
 
     async query(
@@ -764,21 +760,9 @@ I've created the html design, please reveiw and let me know if you need any chan
                         this.outputChannel.appendLine(`${JSON.stringify(chunk)}`);
                         this.outputChannel.appendLine(`========================================`);
                         
-                        let finishMessage = 'Response completed';
-                        if (chunk.finishReason === 'stop') {
-                            finishMessage = 'Response completed successfully';
-                        } else if (chunk.finishReason === 'length') {
-                            finishMessage = 'Response completed (reached maximum length)';
+                        if (chunk.finishReason === 'length') {
                             this.outputChannel.appendLine('WARNING: Response was truncated due to token limit');
                         }
-                        
-                        const resultMessage: CoreMessage = {
-                            role: 'assistant',
-                            content: finishMessage
-                        };
-                        
-                        onMessage?.(resultMessage);
-                        responseMessages.push(resultMessage);
                         break;
 
                     case 'error':
