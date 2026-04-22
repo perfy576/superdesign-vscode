@@ -45,59 +45,71 @@
     "commands": [
       {
         "command": "superdesign.helloWorld",
-        "title": "Hello World",
+        "title": "你好，Superdesign",
         "category": "Superdesign"
       },
       {
         "command": "superdesign.configureApiKey",
-        "title": "Configure Anthropic API Key",
+        "title": "配置 Anthropic API Key",
         "category": "Superdesign"
       },
       {
         "command": "superdesign.configureOpenAIApiKey",
-        "title": "Configure OpenAI API Key",
+        "title": "配置 OpenAI API Key",
         "category": "Superdesign"
       },
       {
         "command": "superdesign.configureOpenAIUrl",
-        "title": "Configure OpenAI url",
+        "title": "配置 OpenAI 接口地址",
         "category": "Superdesign"
       },
       {
         "command": "superdesign.configureOpenRouterApiKey",
-        "title": "Configure OpenRouter API Key",
+        "title": "配置 OpenRouter API Key",
         "category": "Superdesign"
       },
       {
         "command": "superdesign.showChatSidebar",
-        "title": "Show Chat Sidebar",
+        "title": "显示聊天侧边栏",
         "category": "Superdesign"
       },
       {
         "command": "superdesign.openCanvas",
-        "title": "Open Canvas View",
+        "title": "打开画布",
         "category": "Superdesign",
         "icon": "$(window)"
       },
       {
+        "command": "superdesign.showConversationHistory",
+        "title": "历史对话",
+        "category": "Superdesign",
+        "icon": "$(history)"
+      },
+      {
+        "command": "superdesign.newConversation",
+        "title": "新建对话",
+        "category": "Superdesign",
+        "icon": "$(add)"
+      },
+      {
         "command": "superdesign.clearChat",
-        "title": "Clear Chat",
+        "title": "清空当前对话",
         "category": "Superdesign",
         "icon": "$(clear-all)"
       },
       {
         "command": "superdesign.resetWelcome",
-        "title": "Reset Welcome Screen",
+        "title": "重置欢迎页",
         "category": "Superdesign"
       },
       {
         "command": "superdesign.initializeProject",
-        "title": "Initialize Superdesign",
+        "title": "初始化 Superdesign",
         "category": "Superdesign"
       },
       {
         "command": "superdesign.openSettings",
-        "title": "Open Settings",
+        "title": "打开设置",
         "category": "Superdesign",
         "icon": "$(settings-gear)"
       }
@@ -110,12 +122,17 @@
           "group": "navigation"
         },
         {
-          "command": "superdesign.openSettings",
+          "command": "superdesign.showConversationHistory",
           "when": "view == superdesign.chatView",
           "group": "navigation"
         },
         {
-          "command": "superdesign.clearChat",
+          "command": "superdesign.newConversation",
+          "when": "view == superdesign.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "superdesign.openSettings",
           "when": "view == superdesign.chatView",
           "group": "navigation"
         }
@@ -150,26 +167,26 @@
             "claude-code"
           ],
           "enumDescriptions": [
-            "Use Anthropic API key to communicate with Claude via SDK",
-            "Use local claude binary for enhanced code execution capabilities"
+            "使用 Anthropic API Key 通过 SDK 与 Claude 通信",
+            "使用本地 claude 可执行文件获得更强的代码执行能力"
           ],
           "default": "claude-api",
-          "description": "Choose the LLM provider to use for AI interactions",
+          "description": "选择用于 AI 对话的 LLM 提供方",
           "scope": "application"
         },
         "superdesign.anthropicApiKey": {
           "type": "string",
-          "description": "Anthropic API key for Claude Code integration (required for claude-api provider)",
+          "description": "Anthropic API Key，用于 Claude API 模式",
           "scope": "application"
         },
         "superdesign.anthropicUrl": {
           "type": "string",
-          "description": "Custom Anthropic API URL (for local proxies like localhost:4000)",
+          "description": "自定义 Anthropic API 地址，可用于本地代理（如 localhost:4000）",
           "scope": "application"
         },
         "superdesign.claudeCodePath": {
           "type": "string",
-          "description": "Path to claude binary (defaults to 'claude' for npm install, use 'claude-code' if installed via shell script)",
+          "description": "claude 可执行文件路径。npm 安装通常为 claude，脚本安装可能为 claude-code",
           "scope": "application"
         },
         "superdesign.claudeCodeModelId": {
@@ -181,28 +198,34 @@
             "claude-3-opus-20240229"
           ],
           "default": "claude-sonnet-4-20250514",
-          "description": "Model ID to use with claude binary",
+          "description": "claude 可执行文件使用的模型 ID",
           "scope": "application"
         },
         "superdesign.claudeCodeThinkingBudget": {
           "type": "number",
           "default": 50000,
-          "description": "Thinking budget tokens for claude-code provider",
+          "description": "claude-code 模式的思考预算 token 数",
           "scope": "application"
         },
         "superdesign.openaiApiKey": {
           "type": "string",
-          "description": "OpenAI API key for custom agent",
+          "description": "OpenAI API Key",
           "scope": "application"
         },
         "superdesign.openaiUrl": {
           "type": "string",
-          "description": "OpenAI url for custom agent",
+          "description": "自定义 OpenAI 接口地址",
           "scope": "application"
         },
         "superdesign.openrouterApiKey": {
           "type": "string",
-          "description": "OpenRouter API key for custom agent",
+          "description": "OpenRouter API Key",
+          "scope": "application"
+        },
+        "superdesign.userAgent": {
+          "type": "string",
+          "default": "codex-tui/0.121.0 (Windows 10.0.19045; x86_64) WezTerm/20240203-110809-5046fc22 (codex-tui; 0.121.0)",
+          "description": "自定义请求头 User-Agent。留空则使用默认的 Codex 标识",
           "scope": "application"
         },
         "superdesign.aiModelProvider": {
@@ -214,12 +237,12 @@
             "claude-code"
           ],
           "default": "anthropic",
-          "description": "AI model provider for custom agent (OpenAI, Anthropic, OpenRouter, or Claude Code - Note: Claude Code should be used via the main LLM Provider setting instead)",
+          "description": "自定义 Agent 使用的模型提供方（OpenAI、Anthropic、OpenRouter 或 Claude Code）",
           "scope": "application"
         },
         "superdesign.aiModel": {
           "type": "string",
-          "description": "Specific AI model to use (e.g., gpt-4o, claude-3-5-sonnet-20241022)",
+          "description": "指定使用的 AI 模型，例如 gpt-4o、claude-3-5-sonnet-20241022",
           "scope": "application"
         }
       }

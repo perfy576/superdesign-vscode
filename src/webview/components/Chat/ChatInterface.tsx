@@ -312,6 +312,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                     Object.values(timerIntervals.current).forEach(timer => clearInterval(timer));
                     timerIntervals.current = {};
                     setShowWelcome(false);
+                } else if (message.command === 'newConversation') {
+                    handleNewConversation();
+                } else if (message.command === 'toggleHistoryMenu') {
+                    setShowHistoryMenu(prev => !prev);
                 } else if (message.command === 'resetWelcome') {
                     // Handle reset welcome command from command palette
                     resetFirstTimeUser();
@@ -1647,40 +1651,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
         >
 
             <header className={`chat-header chat-header--${layout}`}>
-                <div className="chat-header__main">
+                <div className="chat-header__main" ref={historyMenuRef}>
                     <h2>{layout === 'sidebar' ? 'Superdesign Chat' : 'Chat with Claude'}</h2>
                     <p>{activeConversationTitle}</p>
-                </div>
-                <div className="chat-header__actions" ref={historyMenuRef}>
-                    <button
-                        className={`chat-header-btn chat-header-btn--history ${showHistoryMenu ? 'is-active' : ''}`}
-                        onClick={() => setShowHistoryMenu(prev => !prev)}
-                        title="Conversation history"
-                        disabled={isLoading}
-                    >
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M8 3.25a4.75 4.75 0 1 1-4.19 2.51" />
-                            <path d="M3.25 1.75v4h4" />
-                            <path d="M8 5.25v3l2 1.25" />
-                        </svg>
-                    </button>
-                    <button 
-                        className="chat-header-btn chat-header-btn--new"
-                        onClick={handleNewConversation}
-                        title="New conversation"
-                        disabled={isLoading}
-                    >
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M2.75 11.75V13.25H4.25L11.65 5.85L10.15 4.35L2.75 11.75Z" />
-                            <path d="M9.75 4.75L11.25 3.25L12.75 4.75L11.25 6.25" />
-                            <path d="M8 2.75V5.25" />
-                            <path d="M6.75 4H9.25" />
-                        </svg>
-                    </button>
                     {showHistoryMenu && (
                         <div className="conversation-history-menu">
                             <div className="conversation-history-menu__header">
-                                <span>History</span>
+                                <span>历史对话</span>
                                 <span>{conversations.length}</span>
                             </div>
                             <div className="conversation-history-menu__list">
@@ -1696,13 +1673,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                                         >
                                             <span className="conversation-history-item__title">{conversation.title}</span>
                                             <span className="conversation-history-item__meta">
-                                                {formatConversationTime(conversation.updatedAt)} · {conversation.messageCount} msgs
+                                                {formatConversationTime(conversation.updatedAt)} · {conversation.messageCount} 条消息
                                             </span>
                                         </button>
                                         <button
                                             className="conversation-history-item__delete"
                                             onClick={() => handleDeleteConversation(conversation)}
-                                            title={`Delete ${conversation.title}`}
+                                            title={`删除 ${conversation.title}`}
                                             disabled={isLoading || conversations.length === 1}
                                         >
                                             ×

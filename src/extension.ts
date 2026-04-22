@@ -1311,12 +1311,26 @@ export function activate(context: vscode.ExtensionContext) {
 		});
 	});
 
+	// Register new conversation command
+	const newConversationDisposable = vscode.commands.registerCommand('superdesign.newConversation', () => {
+		sidebarProvider.sendMessage({
+			command: 'newConversation'
+		});
+	});
+
+	// Register conversation history command
+	const showConversationHistoryDisposable = vscode.commands.registerCommand('superdesign.showConversationHistory', () => {
+		sidebarProvider.sendMessage({
+			command: 'toggleHistoryMenu'
+		});
+	});
+
 	// Register reset welcome command
 	const resetWelcomeDisposable = vscode.commands.registerCommand('superdesign.resetWelcome', () => {
 		sidebarProvider.sendMessage({
 			command: 'resetWelcome'
 		});
-		vscode.window.showInformationMessage('Welcome screen has been reset. Refresh the sidebar to see the welcome screen again.');
+		vscode.window.showInformationMessage('欢迎页已重置，刷新侧边栏后即可重新看到欢迎页。');
 	});
 
 	// Register initialize project command
@@ -1402,6 +1416,8 @@ export function activate(context: vscode.ExtensionContext) {
 		showSidebarDisposable,
 		openCanvasDisposable,
 		clearChatDisposable,
+		newConversationDisposable,
+		showConversationHistoryDisposable,
 		resetWelcomeDisposable,
 		initializeProjectDisposable,
 		openSettingsDisposable,

@@ -19,7 +19,7 @@ import { createLsTool } from '../tools/ls-tool';
 import { createMultieditTool } from '../tools/multiedit-tool';
 import { historyHasImages, serializeConversationForTextOnlyProvider, summarizeContent } from '../utils/chatContent';
 
-const OPENCODE_USER_AGENT = 'OpenCode/1.0';
+const DEFAULT_CODEX_USER_AGENT = 'codex-tui/0.121.0 (Windows 10.0.19045; x86_64) WezTerm/20240203-110809-5046fc22 (codex-tui; 0.121.0)';
 const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1';
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 
@@ -181,8 +181,11 @@ export class CustomAgentService implements AgentService {
     }
 
     private getProviderHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
+        const config = vscode.workspace.getConfiguration('superdesign');
+        const configuredUserAgent = config.get<string>('userAgent')?.trim();
+
         return {
-            'User-Agent': OPENCODE_USER_AGENT,
+            'User-Agent': configuredUserAgent || DEFAULT_CODEX_USER_AGENT,
             ...extraHeaders
         };
     }
