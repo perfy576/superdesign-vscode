@@ -433,8 +433,8 @@ export function useChat(vscode: any): ChatHookResult {
                                     type: 'tool-result',
                                     toolCallId: message.metadata?.tool_id || 'unknown',
                                     toolName: message.metadata?.tool_name || 'unknown',
-                                    result: message.content || '',
-                                    isError: false
+                                    result: message.metadata?.tool_result ?? message.content ?? '',
+                                    isError: message.metadata?.is_error || false
                                 }]
                             });
                         }

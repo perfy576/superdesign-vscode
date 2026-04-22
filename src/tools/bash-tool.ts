@@ -61,6 +61,45 @@ function hasUnsafeCommand(command: string): boolean {
   return unsafePatterns.some(pattern => pattern.test(command));
 }
 
+function isReadOnlyShellCommand(command: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  // Keep shell usage simple and inspection-oriented in design mode.
+  if (/[;&`]/.test(trimmed) || /\$\(|\|\||&&|>>?|<</.test(trimmed)) {
+    return false;
+  }
+
+  const tokens = trimmed.split(/\s+/);
+  const base = tokens[0]?.toLowerCase();
+  const second = tokens[1]?.toLowerCase();
+
+  const allowedBaseCommands = new Set([
+    'ls', 'rg', 'grep', 'cat', 'head', 'tail', 'sed', 'awk', 'find', 'tree',
+    'git', 'pwd', 'stat', 'wc', 'sort', 'uniq', 'cut', 'basename', 'dirname',
+    'printf', 'echo', 'readlink'
+  ]);
+
+  if (!base || !allowedBaseCommands.has(base)) {
+    return false;
+  }
+
+  if (base === 'git') {
+    const allowedGitSubcommands = new Set([
+      'status', 'diff', 'log', 'show', 'rev-parse', 'branch', 'ls-files', 'grep', 'blame'
+    ]);
+    return !!second && allowedGitSubcommands.has(second);
+  }
+
+  if (base === 'sed') {
+    return !tokens.some(token => token === '-i' || token.startsWith('-i'));
+  }
+
+  return true;
+}
+
 // Path validation is now handled by validateWorkspacePath in tool-utils
 
 /**
@@ -167,6 +206,14 @@ export function createBashTool(context: ExecutionContext) {
         // Security checks
         if (hasUnsafeCommand(command)) {
           return handleToolError('Command contains potentially unsafe operations', 'Security check', 'security');
+        }
+
+        if (context.shellMode === 'read-only' && !isReadOnlyShellCommand(command)) {
+          return handleToolError(
+            'Only read-only inspection commands are allowed in design mode. Analyze the codebase, then generate design artifacts instead of modifying source files through shell commands.',
+            'Shell mode restriction',
+            'security'
+          );
         }
 
         // Resolve execution directory

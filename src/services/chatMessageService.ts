@@ -8,6 +8,8 @@ import mime from 'mime-types';
 
 export class ChatMessageService {
     private currentRequestController?: AbortController;
+    private currentRequestTimeoutId?: NodeJS.Timeout;
+    private currentRequestTimedOut = false;
 
     constructor(
         private agentService: AgentService,
@@ -16,6 +18,7 @@ export class ChatMessageService {
 
     async handleChatMessage(message: any, webview: vscode.Webview): Promise<void> {
         try {
+            this.currentRequestTimedOut = false;
             const chatHistory: CoreMessage[] = message.chatHistory || [];
             const latestMessage = typeof message.message === 'string' ? message.message : '';
             const messageContent = getLatestUserContent(chatHistory, message.messageContent);
@@ -44,6 +47,14 @@ export class ChatMessageService {
             
             // Create new AbortController for this request
             this.currentRequestController = new AbortController();
+            const config = vscode.workspace.getConfiguration('superdesign');
+            const requestTimeoutMs = Math.max(1000, config.get<number>('requestTimeoutMs', 180000));
+
+            this.currentRequestTimeoutId = setTimeout(() => {
+                this.currentRequestTimedOut = true;
+                Logger.error(`Chat request timed out after ${requestTimeoutMs}ms`);
+                this.currentRequestController?.abort();
+            }, requestTimeoutMs);
             
             // Send initial streaming start message
             webview.postMessage({
@@ -104,6 +115,9 @@ export class ChatMessageService {
 
             // Check if request was aborted
             if (this.currentRequestController.signal.aborted) {
+                if (this.currentRequestTimedOut) {
+                    throw new Error(`Model request timed out after ${Math.round(requestTimeoutMs / 1000)} seconds.`);
+                }
                 Logger.warn('Request was aborted');
                 return;
             }
@@ -118,6 +132,21 @@ export class ChatMessageService {
         } catch (error) {
             // Check if the error is due to abort
             if (this.currentRequestController?.signal.aborted) {
+                if (this.currentRequestTimedOut) {
+                    const timeoutMessage = error instanceof Error && error.message
+                        ? error.message
+                        : 'Model request timed out.';
+                    Logger.error(`Request timed out: ${timeoutMessage}`);
+                    webview.postMessage({
+                        command: 'chatError',
+                        error: timeoutMessage
+                    });
+                    webview.postMessage({
+                        command: 'chatStreamEnd'
+                    });
+                    return;
+                }
+
                 Logger.info('Request was stopped by user');
                 webview.postMessage({
                     command: 'chatStopped'
@@ -192,8 +221,16 @@ export class ChatMessageService {
                     command: 'chatError',
                     error: errorMessage
                 });
+                webview.postMessage({
+                    command: 'chatStreamEnd'
+                });
             }
         } finally {
+            if (this.currentRequestTimeoutId) {
+                clearTimeout(this.currentRequestTimeoutId);
+                this.currentRequestTimeoutId = undefined;
+            }
+            this.currentRequestTimedOut = false;
             // Clear the controller when done
             this.currentRequestController = undefined;
         }
@@ -330,7 +367,8 @@ export class ChatMessageService {
                         metadata: {
                             tool_id: part.toolCallId,
                             tool_name: part.toolName,
-                            is_error: part.isError || false
+                            is_error: part.isError || false,
+                            tool_result: part.result
                         }
                     });
                     
@@ -339,7 +377,8 @@ export class ChatMessageService {
                         command: 'chatToolResult',
                         tool_use_id: part.toolCallId,
                         content: content,
-                        is_error: part.isError || false
+                        is_error: part.isError || false,
+                        tool_result: part.result
                     });
                 }
             }

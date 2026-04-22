@@ -7,6 +7,7 @@ import {
   handleToolError, 
   validateWorkspacePath, 
   resolveWorkspacePath, 
+  validateWritePermission,
   createSuccessResponse,
   ToolResponse 
 } from './tool-utils';
@@ -43,6 +44,11 @@ export function createWriteTool(context: ExecutionContext) {
         const pathError = validateWorkspacePath(file_path, context);
         if (pathError) {
           return pathError;
+      }
+
+      const writePermissionError = validateWritePermission(file_path, context, 'Write tool');
+      if (writePermissionError) {
+        return writePermissionError;
       }
 
       // Resolve absolute path within workspace

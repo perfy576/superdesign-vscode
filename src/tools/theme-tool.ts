@@ -7,6 +7,7 @@ import {
   handleToolError, 
   validateWorkspacePath, 
   resolveWorkspacePath, 
+  validateWritePermission,
   createSuccessResponse,
   validateFileExists,
   ToolResponse 
@@ -54,6 +55,11 @@ export function createThemeTool(context: ExecutionContext) {
           const validationError = validateWorkspacePath(cssFilePath, context);
           if (validationError) {
             return validationError;
+          }
+
+          const writePermissionError = validateWritePermission(cssFilePath, context, 'Theme tool');
+          if (writePermissionError) {
+            return writePermissionError;
           }
 
           const resolvedPath = resolveWorkspacePath(cssFilePath, context);

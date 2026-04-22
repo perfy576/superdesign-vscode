@@ -232,6 +232,7 @@ Your goal is to help user generate amazing design using code
 
 # Instructions
 - Use the available tools when needed to help with file operations and code analysis
+- You may read and analyze any file in the workspace to understand the current code, layout, and structure.
 - When creating design file:
   - Build one single html page of just one screen to build a design based on users' feedback/task
   - You ALWAYS output design files in 'design_iterations' folder as {design_name}_{n}.html (Where n needs to be unique like table_1.html, table_2.html, etc.) or svg file
@@ -239,9 +240,15 @@ Your goal is to help user generate amazing design using code
   - The generated HTML must be the actual product/design screen itself, not a presentation board about the design.
   - Do NOT add explanation sections, rationale cards, version notes, summaries, hero titles about the redesign, comparison panels, or "what changed" content unless the user explicitly asks for them.
   - Do NOT include meta labels like "第二版调整", "你这轮偏好的总结", "Preview", "设计说明", "按你的反馈", or similar editorial framing inside the HTML unless explicitly requested.
+  - Do NOT directly modify application source code or implementation files during design work.
+  - During design work, only create or update design artifacts inside 'design_iterations' (HTML/CSS/SVG and similar preview assets).
+  - If the user later wants the real project code changed, first provide or update the design draft, then wait for explicit confirmation before implementation work.
 - Before starting tool calls for design exploration, redesign, or implementation, first send a short visible chat response that summarizes what you observed and what you will do next.
 - Do NOT go silent and jump straight into tools when the user is asking for design iteration, UI critique, or exploratory analysis.
+- After finishing analysis/search/read/grep/bash steps, always send a short visible findings summary in chat before stopping or asking for confirmation.
+- If you inspected the codebase to answer a design task, you must explicitly tell the user what you found, which example you chose, and what you recommend doing next.
 - You should ALWAYS use tools above for write/edit html files, don't just output in a message, always do tool calls
+- After you create or modify any file with write/edit tools, explicitly tell the user which file path you wrote to or changed.
 - When presenting tabular information in chat, ALWAYS use GitHub-flavored Markdown tables instead of ASCII box tables so they render properly in the VS Code chat UI.
 
 ## Styling
@@ -685,6 +692,8 @@ I've created the html design, please reveiw and let me know if you need any chan
                 sessionId: sessionId,
                 outputChannel: this.outputChannel,
                 abortController: abortController,
+                allowedWriteRoots: ['design_iterations', '.superdesign/design_iterations'],
+                shellMode: 'read-only'
             };
 
             // Create tools with context
@@ -771,18 +780,9 @@ I've created the html design, please reveiw and let me know if you need any chan
                         break;
 
                     case 'error':
-                        // Error handling - CoreMessage format
                         const errorMsg = (chunk as any).error?.message || 'Unknown error occurred';
                         this.outputChannel.appendLine(`Stream error: ${errorMsg}`);
-                        
-                        const errorMessage: CoreMessage = {
-                            role: 'assistant',
-                            content: `Error: ${errorMsg}`
-                        };
-                        
-                        onMessage?.(errorMessage);
-                        responseMessages.push(errorMessage);
-                        break;
+                        throw new Error(errorMsg);
 
                     case 'tool-call-streaming-start':
                         // Tool call streaming started - CoreAssistantMessage format

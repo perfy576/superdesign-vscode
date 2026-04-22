@@ -244,6 +244,13 @@
           "type": "string",
           "description": "指定使用的 AI 模型，例如 gpt-4o、claude-3-5-sonnet-20241022",
           "scope": "application"
+        },
+        "superdesign.requestTimeoutMs": {
+          "type": "number",
+          "default": 180000,
+          "minimum": 1000,
+          "description": "模型请求超时时间，单位毫秒。超时后会在聊天区显示错误",
+          "scope": "application"
         }
       }
     }

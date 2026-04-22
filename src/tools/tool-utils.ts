@@ -106,6 +106,43 @@ export function resolveWorkspacePath(filePath: string, context: ExecutionContext
   }
 }
 
+function resolveAllowedWriteRoots(context: ExecutionContext): string[] {
+  return (context.allowedWriteRoots || []).map(root => (
+    path.isAbsolute(root)
+      ? path.normalize(root)
+      : path.resolve(context.workingDirectory, root)
+  ));
+}
+
+export function validateWritePermission(
+  filePath: string,
+  context: ExecutionContext,
+  operation: string = 'modify files'
+): ToolErrorResponse | null {
+  const allowedRoots = resolveAllowedWriteRoots(context);
+
+  if (allowedRoots.length === 0) {
+    return null;
+  }
+
+  const resolvedPath = resolveWorkspacePath(filePath, context);
+  const allowed = allowedRoots.some(root => (
+    resolvedPath === root || resolvedPath.startsWith(`${root}${path.sep}`)
+  ));
+
+  if (allowed) {
+    return null;
+  }
+
+  const allowedRootsDisplay = (context.allowedWriteRoots || []).join(', ');
+
+  return handleToolError(
+    `Only design artifact files can be changed in this mode. Use ${allowedRootsDisplay} for generated HTML/CSS/SVG output instead of modifying application source files.`,
+    operation,
+    'security'
+  );
+}
+
 /**
  * Create a success response
  */

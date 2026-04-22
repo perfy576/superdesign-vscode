@@ -19,4 +19,6 @@ export interface ExecutionContext {
     sessionId: string;
     outputChannel: vscode.OutputChannel;
     abortController?: AbortController;
-} 
+    allowedWriteRoots?: string[];
+    shellMode?: 'read-only' | 'workspace';
+}

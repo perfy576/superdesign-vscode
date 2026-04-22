@@ -7,6 +7,7 @@ import {
   handleToolError, 
   validateWorkspacePath, 
   resolveWorkspacePath, 
+  validateWritePermission,
   createSuccessResponse,
   validateFileExists,
   ToolResponse 
@@ -95,6 +96,11 @@ export function createMultieditTool(context: ExecutionContext) {
         const pathError = validateWorkspacePath(file_path, context);
         if (pathError) {
           return pathError;
+        }
+
+        const writePermissionError = validateWritePermission(file_path, context, 'Multiedit tool');
+        if (writePermissionError) {
+          return writePermissionError;
         }
 
         // Resolve path

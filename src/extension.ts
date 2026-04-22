@@ -179,6 +179,30 @@ async function getCssFileContent(filePath: string, sidebarProvider: ChatSidebarP
 	}
 }
 
+async function openFileInBrowser(filePath: string) {
+	try {
+		const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+		if (!workspaceFolder) {
+			throw new Error('No workspace folder found. Please open a workspace first.');
+		}
+
+		const resolvedPath = path.isAbsolute(filePath)
+			? filePath
+			: path.join(workspaceFolder.uri.fsPath, filePath);
+
+		const fileUri = vscode.Uri.file(resolvedPath);
+		await vscode.workspace.fs.stat(fileUri);
+
+		const opened = await vscode.env.openExternal(fileUri);
+		if (!opened) {
+			throw new Error('Failed to open the file in the default browser.');
+		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		vscode.window.showErrorMessage(`无法在浏览器中打开文件: ${message}`);
+	}
+}
+
 // Function to submit email to Supabase API
 async function submitEmailToSupabase(email: string, sidebarProvider: ChatSidebarProvider) {
 	try {
@@ -273,6 +297,8 @@ Your goal is to help user generate amazing design using code
   - Do NOT include meta labels like "第二版调整", "你这轮偏好的总结", "Preview", "设计说明", "按你的反馈", or similar editorial framing inside the HTML unless explicitly requested.
   - Before starting tool calls for design exploration, redesign, or implementation, first send a short visible chat response that summarizes what you observed and what you will do next.
   - Do NOT go silent and jump straight into tools when the user is asking for design iteration, UI critique, or exploratory analysis.
+  - After finishing analysis/search/read/grep/bash steps, always send a short visible findings summary in chat before stopping or asking for confirmation.
+  - If you inspected the codebase to answer a design task, you must explicitly tell the user what you found, which example you chose, and what you recommend doing next.
 - You should ALWAYS use tools above for write/edit html files, don't just output in a message, always do tool calls
 
 ## Styling
@@ -1354,7 +1380,7 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	// Set up message handler for auto-canvas functionality
-	sidebarProvider.setMessageHandler((message) => {
+	sidebarProvider.setMessageHandler(async (message) => {
 		switch (message.command) {
 			case 'checkCanvasStatus':
 				// Check if canvas panel is currently open
@@ -1396,6 +1422,10 @@ export function activate(context: vscode.ExtensionContext) {
 			case 'showError':
 				// Show error message to user
 				vscode.window.showErrorMessage(message.data);
+				break;
+
+			case 'openInBrowser':
+				await openFileInBrowser(message.filePath);
 				break;
 
 			case 'submitEmail':

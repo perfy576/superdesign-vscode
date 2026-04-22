@@ -7,6 +7,7 @@ import {
   handleToolError, 
   validateWorkspacePath, 
   resolveWorkspacePath, 
+  validateWritePermission,
   createSuccessResponse,
   validateFileExists,
   ToolResponse 
@@ -144,6 +145,11 @@ export function createEditTool(context: ExecutionContext) {
         const pathError = validateWorkspacePath(file_path, context);
         if (pathError) {
           return pathError;
+        }
+
+        const writePermissionError = validateWritePermission(file_path, context, 'Edit tool');
+        if (writePermissionError) {
+          return writePermissionError;
         }
 
         console.log(`Editing file: ${file_path}`);

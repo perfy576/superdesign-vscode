@@ -221,6 +221,11 @@ Whenever there are UI implementation task, think deeply of the design style firs
 6. Do NOT include meta labels like "第二版调整", "你这轮偏好的总结", "Preview", "设计说明", "按你的反馈", or similar editorial framing inside the HTML unless explicitly requested.
 7. Before starting tool calls for design exploration, redesign, or implementation, first send a short visible chat response that summarizes what you observed and what you will do next.
 8. Do NOT go silent and jump straight into tools when the user is asking for design iteration, UI critique, or exploratory analysis.
+9. After finishing analysis/search/read/grep/bash steps, always send a short visible findings summary in chat before stopping or asking for confirmation.
+10. If you inspected the codebase to answer a design task, you must explicitly tell the user what you found, which example you chose, and what you recommend doing next.
+11. You may read and analyze any file in the workspace, but do NOT directly modify application source code during design work.
+12. During design work, only create or update design artifacts inside '.superdesign/design_iterations'.
+13. If the user later wants the real project code changed, first provide or update the design draft, then wait for explicit confirmation before implementation work.
 </task_for_each_sub_agent>
 
 ## Technical Specifications

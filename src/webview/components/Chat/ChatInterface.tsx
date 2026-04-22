@@ -62,6 +62,45 @@ function getContextImages(context: CurrentContextState | null): ContextImage[] {
         });
 }
 
+function parseToolResult(result: unknown): Record<string, any> | null {
+    if (!result) {
+        return null;
+    }
+
+    if (typeof result === 'object') {
+        return result as Record<string, any>;
+    }
+
+    if (typeof result === 'string') {
+        try {
+            const parsed = JSON.parse(result);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch {
+            return null;
+        }
+    }
+
+    return null;
+}
+
+function getToolTargetPath(toolName: string, toolInput: Record<string, any>, toolResultPart: any): string | null {
+    const toolResult = parseToolResult(toolResultPart?.result);
+
+    if (toolName === 'write' || toolName === 'edit') {
+        return toolInput.file_path || toolResult?.file_path || toolResult?.absolute_path || null;
+    }
+
+    if (toolName === 'read') {
+        return toolInput.filePath || toolResult?.file_path || toolResult?.absolute_path || null;
+    }
+
+    return null;
+}
+
+function isHtmlFilePath(filePath?: string | null): boolean {
+    return !!filePath && /\.html?$/i.test(filePath);
+}
+
 function formatConversationTime(timestamp: number): string {
     const date = new Date(timestamp);
     const now = new Date();
@@ -1286,6 +1325,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
             const toolResultPart = findToolResult(toolCallId);
             const hasResult = !!toolResultPart;
             const resultIsError = toolResultPart?.isError || false;
+            const targetPath = getToolTargetPath(toolName, toolInput, toolResultPart);
+            const canOpenInBrowser = isHtmlFilePath(targetPath);
             
             // Tool is loading if we don't have a result yet, or if metadata indicates loading
             const isLoading = !hasResult || toolCallPart.metadata?.is_loading || false;
@@ -1317,15 +1358,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
             // Get friendly tool name for display
             const getFriendlyToolName = (name: string): string => {
                 const friendlyNames: { [key: string]: string } = {
-                    'mcp_taskmaster-ai_parse_prd': 'Parsing Requirements Document',
-                    'mcp_taskmaster-ai_analyze_project_complexity': 'Analyzing Project Complexity',
-                    'mcp_taskmaster-ai_expand_task': 'Expanding Task',
-                    'mcp_taskmaster-ai_expand_all': 'Expanding All Tasks',
-                    'mcp_taskmaster-ai_research': 'Researching Information',
-                    'codebase_search': 'Searching Codebase',
-                    'read_file': 'Reading File',
-                    'edit_file': 'Editing File',
-                    'run_terminal_cmd': 'Running Command'
+                    'mcp_taskmaster-ai_parse_prd': '解析需求文档',
+                    'mcp_taskmaster-ai_analyze_project_complexity': '分析项目复杂度',
+                    'mcp_taskmaster-ai_expand_task': '拆解任务',
+                    'mcp_taskmaster-ai_expand_all': '拆解全部任务',
+                    'mcp_taskmaster-ai_research': '资料调研',
+                    'codebase_search': '搜索代码库',
+                    'read_file': '读取文件',
+                    'edit_file': '编辑文件',
+                    'run_terminal_cmd': '执行命令',
+                    'write': '写入文件',
+                    'edit': '编辑文件',
+                    'read': '读取文件',
+                    'bash': '执行命令',
+                    'grep': '搜索内容',
+                    'glob': '匹配文件',
+                    'ls': '列出目录'
                 };
                 return friendlyNames[name] || name.replace(/mcp_|_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
             };
@@ -1396,6 +1444,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                     [`${uniqueKey}_prompt`]: !prev[`${uniqueKey}_prompt`]
                 }));
             };
+
+            const handleOpenInBrowser = (event: React.MouseEvent<HTMLButtonElement>) => {
+                event.stopPropagation();
+
+                if (!targetPath) {
+                    return;
+                }
+
+                vscode.postMessage({
+                    command: 'openInBrowser',
+                    filePath: targetPath
+                });
+            };
             
             // Determine if content needs truncation
             const MAX_PREVIEW = 300;
@@ -1437,6 +1498,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                             </span>
                             <div className="tool-info">
                                 <span className="tool-name">{getFriendlyToolName(toolName)}</span>
+                                {targetPath && (
+                                    <div className="tool-target-row">
+                                        <code className="tool-target-path" title={targetPath}>{targetPath}</code>
+                                        {canOpenInBrowser && (
+                                            <button
+                                                type="button"
+                                                className="tool-inline-action-btn"
+                                                onClick={handleOpenInBrowser}
+                                                title="用默认浏览器打开"
+                                            >
+                                                浏览器打开
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
                                 {description && (
                                     <span className="tool-description">{description}</span>
                                 )}
@@ -1474,13 +1550,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                             )}
                             {command && (
                                 <div className="tool-detail">
-                                    <span className="tool-detail__label">Command:</span>
+                                    <span className="tool-detail__label">命令</span>
                                     <code className="tool-detail__value">{command}</code>
+                                </div>
+                            )}
+                            {targetPath && (
+                                <div className="tool-detail">
+                                    <span className="tool-detail__label">文件</span>
+                                    <code className="tool-detail__value tool-detail__value--text">{targetPath}</code>
                                 </div>
                             )}
                             {Object.keys(toolInput).length > 0 && (
                                 <div className="tool-detail">
-                                    <span className="tool-detail__label">Input:</span>
+                                    <span className="tool-detail__label">输入</span>
                                     <div className="tool-detail__value tool-detail__value--result">
                                         <pre className="tool-result-content">
                                             {displayInput}
@@ -1493,7 +1575,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                                                     toggleShowFullInput();
                                                 }}
                                             >
-                                                {showFullInput ? 'Show Less' : 'Show More'}
+                                                {showFullInput ? '收起' : '展开'}
                                             </button>
                                         )}
                                     </div>
@@ -1501,7 +1583,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                             )}
                             {prompt && (
                                 <div className="tool-detail">
-                                    <span className="tool-detail__label">Prompt:</span>
+                                    <span className="tool-detail__label">提示词</span>
                                     <div className="tool-detail__value tool-detail__value--result">
                                         <pre className="tool-result-content">
                                             {displayPrompt}
@@ -1514,7 +1596,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                                                     toggleShowFullPrompt();
                                                 }}
                                             >
-                                                {showFullPrompt ? 'Show Less' : 'Show More'}
+                                                {showFullPrompt ? '收起' : '展开'}
                                             </button>
                                         )}
                                     </div>
@@ -1523,7 +1605,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                             {hasResult && (
                                 <div className="tool-detail">
                                     <span className="tool-detail__label">
-                                        {resultIsError ? 'Error Result:' : 'Result:'}
+                                        {resultIsError ? '错误结果' : '结果'}
                                     </span>
                                     <div className={`tool-detail__value tool-detail__value--result ${resultIsError ? 'tool-detail__value--error' : ''}`}>
                                         <pre className="tool-result-content">
@@ -1537,7 +1619,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ layout, vscode }) => {
                                                     toggleShowFullResult();
                                                 }}
                                             >
-                                                {showFullResult ? 'Show Less' : 'Show More'}
+                                                {showFullResult ? '收起' : '展开'}
                                             </button>
                                         )}
                                     </div>
