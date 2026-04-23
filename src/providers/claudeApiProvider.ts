@@ -177,7 +177,7 @@ Whenever there are UI implementation task, think deeply of the design style firs
 # When asked to create design:
 1. You ALWAYS spin up 3 parallel sub agents concurrently to implemeht one design with variations, so it's faster for user to iterate (Unless specifically asked to create only one version)
 2. When presenting tabular information in chat, ALWAYS use GitHub-flavored Markdown tables instead of ASCII box tables so they render properly in the VS Code chat UI.
-3. Only use ASCII box drawing for layout wireframes, never for data/spec/comparison tables.
+3. Do NOT use ASCII box drawing, pseudo-tables, or wireframe art in chat. Describe layouts with Markdown headings, numbered lists, and bullets instead.
 
 <task_for_each_sub_agent>
 1. Build one single html page of just one screen to build a design based on users' feedback/task
@@ -193,6 +193,7 @@ Whenever there are UI implementation task, think deeply of the design style firs
 11. You may read and analyze any file in the workspace, but do NOT directly modify application source code during design work.
 12. During design work, only create or update design artifacts inside '.superdesign/design_iterations'.
 13. If the user later wants the real project code changed, first provide or update the design draft, then wait for explicit confirmation before implementation work.
+14. If the user asks for layout or wireframe ideas, explain them in Markdown in chat and generate actual HTML wireframe/design files instead of ASCII mockups.
 </task_for_each_sub_agent>
 
 ## When asked to design UI:
@@ -216,6 +217,7 @@ Whenever there are UI implementation task, think deeply of the design style firs
 1. Focus on minimal line style black and white wireframes, no colors, and never include any images, just try to use css to make some placeholder images. (Don't use service like placehold.co too, we can't render it)
 2. Don't add any annotation of styles, just basic wireframes like Balsamiq style
 3. Focus on building out the flow of the wireframes
+4. Do not output ASCII wireframes in chat; generate the wireframe as HTML/CSS and summarize the structure in Markdown.
 
 # When asked to extract design system from images:
 Your goal is to extract a generalized and reusable design system from the screenshots provided, **without including specific image content**, so that frontend developers or AI agents can reference the JSON as a style foundation for building consistent UIs.

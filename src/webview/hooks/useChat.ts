@@ -58,6 +58,7 @@ export interface ChatHookResult {
     activeConversationTitle: string;
     conversations: ChatConversationSummary[];
     sendMessage: (message: UserContent) => void;
+    stopChat: () => void;
     clearHistory: () => void;
     createConversation: () => void;
     switchConversation: (conversationId: string) => void;
@@ -349,6 +350,12 @@ export function useChat(vscode: any): ChatHookResult {
         });
     }, [activeConversation, chatHistory, vscode]);
 
+    const stopChat = useCallback(() => {
+        vscode.postMessage({
+            command: 'stopChat'
+        });
+    }, [vscode]);
+
     useEffect(() => {
         const messageHandler = (event: MessageEvent) => {
             const message = event.data;
@@ -541,6 +548,11 @@ export function useChat(vscode: any): ChatHookResult {
 
                 case 'chatStopped':
                     setIsLoading(false);
+                    setConversations(prev => updateConversationHistory(
+                        prev,
+                        targetConversationId,
+                        history => cleanIncompleteToolCalls(history)
+                    ));
                     break;
 
                 default:
@@ -570,6 +582,7 @@ export function useChat(vscode: any): ChatHookResult {
         activeConversationTitle: activeConversation?.title || 'New Conversation',
         conversations: conversationSummaries,
         sendMessage,
+        stopChat,
         clearHistory,
         createConversation: createConversationEntry,
         switchConversation,

@@ -5,6 +5,7 @@ import { CoreMessage, CoreUserMessage } from 'ai';
 import { Logger } from './logger';
 import { extractTextFromContent, getLatestUserContent, summarizeContent } from '../utils/chatContent';
 import mime from 'mime-types';
+import { AIRequestHistoryService, serializeMessagesForHistory } from './aiRequestHistoryService';
 
 export class ChatMessageService {
     private currentRequestController?: AbortController;
@@ -16,7 +17,22 @@ export class ChatMessageService {
         private outputChannel: vscode.OutputChannel
     ) {}
 
+    private isCancellationLikeError(error: unknown): boolean {
+        const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+        return (
+            message.includes('operation cancelled') ||
+            message.includes('operation canceled') ||
+            message.includes('request aborted') ||
+            message.includes('request canceled') ||
+            message.includes('request cancelled') ||
+            message.includes('signal is aborted') ||
+            message.includes('aborterror') ||
+            message === 'aborted'
+        );
+    }
+
     async handleChatMessage(message: any, webview: vscode.Webview): Promise<void> {
+        let requestHistoryId: string | undefined;
         try {
             this.currentRequestTimedOut = false;
             const chatHistory: CoreMessage[] = message.chatHistory || [];
@@ -48,7 +64,7 @@ export class ChatMessageService {
             // Create new AbortController for this request
             this.currentRequestController = new AbortController();
             const config = vscode.workspace.getConfiguration('superdesign');
-            const requestTimeoutMs = Math.max(1000, config.get<number>('requestTimeoutMs', 180000));
+            const requestTimeoutMs = Math.max(1000, config.get<number>('requestTimeoutMs', 600000));
 
             this.currentRequestTimeoutId = setTimeout(() => {
                 this.currentRequestTimedOut = true;
@@ -83,6 +99,15 @@ export class ChatMessageService {
                     role: 'user',
                     content: await this.hydrateImageContent(messageContent)
                 } as CoreMessage];
+            requestHistoryId = AIRequestHistoryService.getInstance().createEntry({
+                requestInput: serializeMessagesForHistory(effectiveChatHistory),
+                hidden: true,
+                requestKind: 'aggregate'
+            });
+            const requestOptions = {
+                requestHistoryId,
+                requestInputForHistory: serializeMessagesForHistory(effectiveChatHistory)
+            };
 
             if (effectiveChatHistory.length > 0) {
                 // Use conversation history - CoreMessage format is already compatible
@@ -90,7 +115,7 @@ export class ChatMessageService {
                 response = await this.agentService.query(
                     undefined, // no prompt 
                     effectiveChatHistory, // use CoreMessage array directly
-                    undefined, 
+                    requestOptions, 
                     this.currentRequestController,
                     (streamMessage: any) => {
                         // Process and send each message as it arrives
@@ -104,7 +129,7 @@ export class ChatMessageService {
                 response = await this.agentService.query(
                     latestTextMessage, // use latest message as prompt
                     undefined, // no messages array
-                    undefined, 
+                    requestOptions, 
                     this.currentRequestController,
                     (streamMessage: any) => {
                         // Process and send each message as it arrives
@@ -130,12 +155,37 @@ export class ChatMessageService {
             });
 
         } catch (error) {
+            if (this.isCancellationLikeError(error)) {
+                Logger.info(`Request ended with cancellation-like signal: ${error}`);
+                if (requestHistoryId) {
+                    AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                        status: 'cancelled',
+                        hidden: false,
+                        completedAt: Date.now(),
+                        resultSummary: '请求已取消'
+                    });
+                }
+                webview.postMessage({
+                    command: 'chatStopped'
+                });
+                return;
+            }
+
             // Check if the error is due to abort
             if (this.currentRequestController?.signal.aborted) {
                 if (this.currentRequestTimedOut) {
                     const timeoutMessage = error instanceof Error && error.message
                         ? error.message
                         : 'Model request timed out.';
+                    if (requestHistoryId) {
+                        AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                        status: 'timeout',
+                        hidden: false,
+                        completedAt: Date.now(),
+                        errorMessage: timeoutMessage,
+                        resultSummary: '请求超时'
+                        });
+                    }
                     Logger.error(`Request timed out: ${timeoutMessage}`);
                     webview.postMessage({
                         command: 'chatError',
@@ -148,6 +198,14 @@ export class ChatMessageService {
                 }
 
                 Logger.info('Request was stopped by user');
+                if (requestHistoryId) {
+                    AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                        status: 'cancelled',
+                        hidden: false,
+                        completedAt: Date.now(),
+                        resultSummary: '请求已取消'
+                    });
+                }
                 webview.postMessage({
                     command: 'chatStopped'
                 });
@@ -214,9 +272,27 @@ export class ChatMessageService {
                         { text: 'Open Settings', command: 'workbench.action.openSettings', args: '@ext:iganbold.superdesign' }
                     ]
                 });
+                if (requestHistoryId) {
+                    AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                        status: 'error',
+                        hidden: false,
+                        completedAt: Date.now(),
+                        errorMessage: displayMessage,
+                        resultSummary: '认证或配置错误'
+                    });
+                }
             } else {
                 // Regular error - show standard error message
                 vscode.window.showErrorMessage(`Chat failed: ${error}`);
+                if (requestHistoryId) {
+                    AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                        status: 'error',
+                        hidden: false,
+                        completedAt: Date.now(),
+                        errorMessage: errorMessage,
+                        resultSummary: '请求失败'
+                    });
+                }
                 webview.postMessage({
                     command: 'chatError',
                     error: errorMessage

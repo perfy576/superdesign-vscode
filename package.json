@@ -38,6 +38,7 @@
   ],
   "activationEvents": [
     "onCommand:superdesign.helloWorld",
+    "onCommand:superdesign.openAIRequestHistory",
     "onView:superdesign.chatView"
   ],
   "main": "./dist/extension.js",
@@ -86,6 +87,12 @@
         "icon": "$(history)"
       },
       {
+        "command": "superdesign.openAIRequestHistory",
+        "title": "AI 请求历史",
+        "category": "Superdesign",
+        "icon": "$(hubot)"
+      },
+      {
         "command": "superdesign.newConversation",
         "title": "新建对话",
         "category": "Superdesign",
@@ -119,22 +126,27 @@
         {
           "command": "superdesign.openCanvas",
           "when": "view == superdesign.chatView",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "superdesign.showConversationHistory",
           "when": "view == superdesign.chatView",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "command": "superdesign.openAIRequestHistory",
+          "when": "view == superdesign.chatView",
+          "group": "navigation@3"
         },
         {
           "command": "superdesign.newConversation",
           "when": "view == superdesign.chatView",
-          "group": "navigation"
+          "group": "navigation@4"
         },
         {
           "command": "superdesign.openSettings",
           "when": "view == superdesign.chatView",
-          "group": "navigation"
+          "group": "navigation@5"
         }
       ]
     },
@@ -247,9 +259,9 @@
         },
         "superdesign.requestTimeoutMs": {
           "type": "number",
-          "default": 180000,
+          "default": 600000,
           "minimum": 1000,
-          "description": "模型请求超时时间，单位毫秒。超时后会在聊天区显示错误",
+          "description": "模型请求超时时间，单位毫秒。默认 600000（10 分钟），超时后会在聊天区显示错误",
           "scope": "application"
         }
       }

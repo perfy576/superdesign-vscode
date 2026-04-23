@@ -17,10 +17,12 @@ import { createGrepTool } from '../tools/grep-tool';
 import { createThemeTool } from '../tools/theme-tool';
 import { createLsTool } from '../tools/ls-tool';
 import { createMultieditTool } from '../tools/multiedit-tool';
-import { historyHasImages, serializeConversationForTextOnlyProvider, summarizeContent } from '../utils/chatContent';
+import { extractTextFromContent, historyHasImages, serializeConversationForTextOnlyProvider, summarizeContent } from '../utils/chatContent';
+import { AIRequestHistoryService, AIRequestTokenUsage, extractErrorInfo, serializeMessagesForHistory } from './aiRequestHistoryService';
 
 const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1';
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 export class CustomAgentService implements AgentService {
     private workingDirectory: string = '';
@@ -33,6 +35,20 @@ export class CustomAgentService implements AgentService {
         this.outputChannel.appendLine('CustomAgentService constructor called');
         this.claudeCodeService = new ClaudeCodeService(outputChannel);
         this.setupWorkingDirectory();
+    }
+
+    private isCancellationLikeError(error: unknown): boolean {
+        const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+        return (
+            message.includes('operation cancelled') ||
+            message.includes('operation canceled') ||
+            message.includes('request aborted') ||
+            message.includes('request canceled') ||
+            message.includes('request cancelled') ||
+            message.includes('signal is aborted') ||
+            message.includes('aborterror') ||
+            message === 'aborted'
+        );
     }
 
     private async setupWorkingDirectory(): Promise<void> {
@@ -193,6 +209,234 @@ export class CustomAgentService implements AgentService {
         };
     }
 
+    private getResolvedRequestInfo(): {
+        provider: string;
+        effectiveProvider: 'openai' | 'anthropic' | 'openrouter' | 'claude-code';
+        model: string;
+        baseUrl: string;
+    } {
+        const config = vscode.workspace.getConfiguration('superdesign');
+        const specificModel = config.get<string>('aiModel');
+        const provider = config.get<string>('aiModelProvider', 'anthropic');
+        const openaiUrl = config.get<string>('openaiUrl');
+        const anthropicUrl = config.get<string>('anthropicUrl');
+
+        let effectiveProvider = provider as 'openai' | 'anthropic' | 'openrouter' | 'claude-code';
+        if (specificModel && provider !== 'claude-code' && !(!openaiUrl && provider === 'openai')) {
+            if (specificModel.includes('/')) {
+                effectiveProvider = 'openrouter';
+            } else if (specificModel.startsWith('claude-')) {
+                effectiveProvider = 'anthropic';
+            } else {
+                effectiveProvider = 'openai';
+            }
+        }
+
+        switch (effectiveProvider) {
+            case 'openrouter':
+                return {
+                    provider: 'OpenRouter',
+                    effectiveProvider,
+                    model: specificModel || 'anthropic/claude-3-7-sonnet-20250219',
+                    baseUrl: DEFAULT_OPENROUTER_BASE_URL
+                };
+            case 'anthropic':
+                return {
+                    provider: 'Anthropic',
+                    effectiveProvider,
+                    model: specificModel || 'claude-4-sonnet-20250514',
+                    baseUrl: anthropicUrl || DEFAULT_ANTHROPIC_BASE_URL
+                };
+            case 'claude-code':
+                return {
+                    provider: 'Claude Code',
+                    effectiveProvider,
+                    model: specificModel || 'claude-code',
+                    baseUrl: 'local://claude-code'
+                };
+            case 'openai':
+            default:
+                return {
+                    provider: 'OpenAI',
+                    effectiveProvider: 'openai',
+                    model: specificModel || 'gpt-4o',
+                    baseUrl: openaiUrl || DEFAULT_OPENAI_BASE_URL
+                };
+        }
+    }
+
+    private extractTokenUsage(chunkLike: any): AIRequestTokenUsage | undefined {
+        const usage = chunkLike?.usage || chunkLike?.totalUsage || chunkLike?.providerMetadata?.usage;
+        const promptDetails = usage?.promptTokensDetails || usage?.inputTokensDetails || usage?.prompt_tokens_details;
+        const completionDetails = usage?.completionTokensDetails || usage?.outputTokensDetails || usage?.completion_tokens_details;
+
+        const inputTokens = this.asFiniteNumber(
+            usage?.inputTokens ?? usage?.promptTokens ?? usage?.prompt_tokens
+        );
+        const outputTokens = this.asFiniteNumber(
+            usage?.outputTokens ?? usage?.completionTokens ?? usage?.completion_tokens
+        );
+        const totalTokens = this.asFiniteNumber(
+            usage?.totalTokens ?? usage?.total_tokens
+        ) ?? (
+            inputTokens !== undefined || outputTokens !== undefined
+                ? (inputTokens || 0) + (outputTokens || 0)
+                : undefined
+        );
+        const cacheReadTokens = this.asFiniteNumber(
+            promptDetails?.cachedTokens ?? promptDetails?.cacheReadTokens ?? promptDetails?.cached_tokens
+        );
+        const cacheWriteTokens = this.asFiniteNumber(
+            promptDetails?.cacheWriteTokens ?? promptDetails?.cacheCreationTokens ?? promptDetails?.cache_creation_tokens
+        );
+
+        if ([inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens].every(value => value === undefined)) {
+            return undefined;
+        }
+
+        return {
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            cacheReadTokens,
+            cacheWriteTokens
+        };
+    }
+
+    private asFiniteNumber(value: unknown): number | undefined {
+        return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    }
+
+    private mergeTokenUsage(
+        primary: AIRequestTokenUsage | undefined,
+        fallback: AIRequestTokenUsage | undefined
+    ): AIRequestTokenUsage | undefined {
+        if (!primary && !fallback) {
+            return undefined;
+        }
+
+        const inputTokens = primary?.inputTokens ?? fallback?.inputTokens;
+        const outputTokens = primary?.outputTokens ?? fallback?.outputTokens;
+        const totalTokens = primary?.totalTokens ?? fallback?.totalTokens ?? (
+            inputTokens !== undefined || outputTokens !== undefined
+                ? (inputTokens || 0) + (outputTokens || 0)
+                : undefined
+        );
+        const cacheReadTokens = primary?.cacheReadTokens ?? fallback?.cacheReadTokens;
+        const cacheWriteTokens = primary?.cacheWriteTokens ?? fallback?.cacheWriteTokens;
+
+        if ([inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens].every(value => value === undefined)) {
+            return undefined;
+        }
+
+        return {
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            cacheReadTokens,
+            cacheWriteTokens
+        };
+    }
+
+    private getHeaderValue(
+        headers: Record<string, string> | undefined,
+        candidates: string[]
+    ): string | undefined {
+        if (!headers) {
+            return undefined;
+        }
+
+        for (const candidate of candidates) {
+            const match = Object.entries(headers).find(([key]) => key.toLowerCase() === candidate.toLowerCase());
+            if (match?.[1]) {
+                return match[1];
+            }
+        }
+
+        return undefined;
+    }
+
+    private extractTokenUsageFromHeaders(headers: Record<string, string> | undefined): AIRequestTokenUsage | undefined {
+        const parseHeaderNumber = (candidates: string[]): number | undefined => {
+            const rawValue = this.getHeaderValue(headers, candidates);
+            if (!rawValue) {
+                return undefined;
+            }
+
+            const parsed = Number(rawValue);
+            return Number.isFinite(parsed) ? parsed : undefined;
+        };
+
+        const inputTokens = parseHeaderNumber([
+            'x-openai-prompt-tokens',
+            'openai-prompt-tokens',
+            'x-prompt-tokens',
+            'prompt-tokens',
+            'x-input-tokens',
+            'input-tokens'
+        ]);
+        const outputTokens = parseHeaderNumber([
+            'x-openai-completion-tokens',
+            'openai-completion-tokens',
+            'x-completion-tokens',
+            'completion-tokens',
+            'x-output-tokens',
+            'output-tokens'
+        ]);
+        const totalTokens = parseHeaderNumber([
+            'x-openai-total-tokens',
+            'openai-total-tokens',
+            'x-total-tokens',
+            'total-tokens'
+        ]) ?? (
+            inputTokens !== undefined || outputTokens !== undefined
+                ? (inputTokens || 0) + (outputTokens || 0)
+                : undefined
+        );
+        const cacheReadTokens = parseHeaderNumber([
+            'x-openai-cached-tokens',
+            'openai-cached-tokens',
+            'x-cached-tokens',
+            'cached-tokens'
+        ]);
+
+        if ([inputTokens, outputTokens, totalTokens, cacheReadTokens].every(value => value === undefined)) {
+            return undefined;
+        }
+
+        return {
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            cacheReadTokens
+        };
+    }
+
+    private shouldAllowDesignWrites(prompt?: string, conversationHistory?: CoreMessage[]): boolean {
+        const latestUserText = (
+            conversationHistory && conversationHistory.length > 0
+                ? extractTextFromContent([...conversationHistory].reverse().find(message => message.role === 'user')?.content)
+                : prompt || ''
+        ).trim();
+        const latestAssistantText = extractTextFromContent(
+            [...(conversationHistory || [])].reverse().find(message => message.role === 'assistant')?.content
+        ).trim();
+
+        if (!latestUserText) {
+            return false;
+        }
+
+        const directGenerateIntent = /(直接.*(设计稿|生成|输出|写)|生成(设计稿|html|页面)|输出(设计稿|html)|开始(生成|做)|进入(设计稿|下一步)|继续(生成|做)|就按这个做|确认生成|开始下一步)/i;
+        if (directGenerateIntent.test(latestUserText)) {
+            return true;
+        }
+
+        const explicitConfirmation = /^(好|好的|可以|行|继续|继续吧|确认|没问题|没异议|开始|做吧|就这样|按这个来|可以开始)$/i;
+        const assistantAskedForConfirmation = /(如果你没异议|是否继续|要不要继续|确认后|确认一下|请确认|would you like to go ahead|sign off|进入设计稿|进入下一步)/i;
+
+        return explicitConfirmation.test(latestUserText) && assistantAskedForConfirmation.test(latestAssistantText);
+    }
+
     private getSystemPrompt(): string {
         const config = vscode.workspace.getConfiguration('superdesign');
         const specificModel = config.get<string>('aiModel');
@@ -235,13 +479,13 @@ Your goal is to help user generate amazing design using code
 - You may read and analyze any file in the workspace to understand the current code, layout, and structure.
 - When creating design file:
   - Build one single html page of just one screen to build a design based on users' feedback/task
-  - You ALWAYS output design files in 'design_iterations' folder as {design_name}_{n}.html (Where n needs to be unique like table_1.html, table_2.html, etc.) or svg file
+  - You ALWAYS output design files in '.superdesign/design_iterations' folder as {design_name}_{n}.html (Where n needs to be unique like table_1.html, table_2.html, etc.) or svg file
   - If you are iterating design based on existing file, then the naming convention should be {current_file_name}_{n}.html, e.g. if we are iterating ui_1.html, then each version should be ui_1_1.html, ui_1_2.html, etc.
   - The generated HTML must be the actual product/design screen itself, not a presentation board about the design.
   - Do NOT add explanation sections, rationale cards, version notes, summaries, hero titles about the redesign, comparison panels, or "what changed" content unless the user explicitly asks for them.
   - Do NOT include meta labels like "第二版调整", "你这轮偏好的总结", "Preview", "设计说明", "按你的反馈", or similar editorial framing inside the HTML unless explicitly requested.
   - Do NOT directly modify application source code or implementation files during design work.
-  - During design work, only create or update design artifacts inside 'design_iterations' (HTML/CSS/SVG and similar preview assets).
+  - During design work, only create or update design artifacts inside '.superdesign/design_iterations' (HTML/CSS/SVG and similar preview assets).
   - If the user later wants the real project code changed, first provide or update the design draft, then wait for explicit confirmation before implementation work.
 - Before starting tool calls for design exploration, redesign, or implementation, first send a short visible chat response that summarizes what you observed and what you will do next.
 - Do NOT go silent and jump straight into tools when the user is asking for design iteration, UI critique, or exploratory analysis.
@@ -250,6 +494,7 @@ Your goal is to help user generate amazing design using code
 - You should ALWAYS use tools above for write/edit html files, don't just output in a message, always do tool calls
 - After you create or modify any file with write/edit tools, explicitly tell the user which file path you wrote to or changed.
 - When presenting tabular information in chat, ALWAYS use GitHub-flavored Markdown tables instead of ASCII box tables so they render properly in the VS Code chat UI.
+- Do NOT use ASCII box drawing, pseudo-tables, or wireframe art in chat. Describe layouts with Markdown headings, numbered lists, and bullets instead.
 
 ## Styling
 1. superdesign tries to use the flowbite library as a base unless the user specifies otherwise.
@@ -392,7 +637,9 @@ You should always follow workflow below unless user explicitly ask you to do som
 
 ### 1. Layout design
 Think through how should the layout of interface look like, what are different UI components
-And present the layout in ASCII wireframe format, here are the guidelines of good ASCII wireframe, you can do ASCII art too for more custom layout or graphic design
+Present the layout as concise Markdown sections and bullet lists.
+Do NOT use ASCII wireframes, pseudo-tables, or box drawing in chat.
+If a wireframe is needed, generate it as an actual HTML design artifact instead of chat ASCII art.
 
 ### 2. Theme design
 Think through what are the colors, fonts, spacing, etc. 
@@ -432,50 +679,15 @@ Let's think through the layout design for an AI chat UI. Here are the key compon
 
 ## Layout Structure Options
 
-┌─────────────────────────────────────┐
-│ ☰          HEADER BAR            + │
-├─────────────────────────────────────┤
-│                                     │
-│ ┌─────────────────────────────┐     │
-│ │     AI Message Bubble       │     │
-│ └─────────────────────────────┘     │
-│                                     │
-│     ┌─────────────────────────────┐ │
-│     │     User Message Bubble     │ │
-│     └─────────────────────────────┘ │
-│                                     │
-│ ┌─────────────────────────────┐     │
-│ │     AI Message Bubble       │     │
-│ └─────────────────────────────┘     │
-│                                     │
-│              [CHAT AREA]            │
-│                                     │
-├─────────────────────────────────────┤
-│ [Text Input Field]           [Send] │
-└─────────────────────────────────────┘
+### Option A
+- Top header with menu on the left and primary actions on the right
+- Central scrollable chat column with alternating AI and user bubbles
+- Bottom composer bar with send button embedded at the right
 
-When hamburger (☰) is clicked, sidebar slides out:
-┌──────────────┬─────────────────────────────────────┐
-│   SIDEBAR    │ ☰           HEADER BAR           + │
-│ ┌──────────┐ ├─────────────────────────────────────┤
-│ │ Chat 1   │ │                                     │
-│ │ Chat 2   │ │ ┌─────────────────────────────┐     │
-│ │ Chat 3   │ │ │     AI Message Bubble       │     │
-│ │ + New    │ │ └─────────────────────────────┘     │
-│ └──────────┘ │                                     │
-│              │     ┌─────────────────────────────┐ │
-│              │     │     User Message Bubble     │ │
-│              │     └─────────────────────────────┘ │
-│              │                                     │
-│              │ ┌─────────────────────────────┐     │
-│              │ │     AI Message Bubble       │     │
-│              │ └─────────────────────────────┘     │
-│              │                                     │
-│              │              [CHAT AREA]            │
-│              │                                     │
-│              ├─────────────────────────────────────┤
-│              │ [Text Input Field]           [Send] │
-└──────────────┘─────────────────────────────────────┘
+### Sidebar Interaction
+- Default state keeps the sidebar collapsed
+- Clicking the menu button reveals the conversation list from the left
+- The main chat area remains primary and should not be visually crowded by navigation
 
 Would you like to go ahead with this layout & UI interaction or needs any modification?
 </assistant>
@@ -487,7 +699,7 @@ They looks good
 <assistant>
 Great, next let's design the color & font theme,
 
-generateTheme(theme_name='Vercel techy style', reasoning_reference='Reference classic shadcn style that has ...', cssFilePath='design_iterations/theme_1.css', cssSheet=':root {
+generateTheme(theme_name='Vercel techy style', reasoning_reference='Reference classic shadcn style that has ...', cssFilePath='.superdesign/design_iterations/theme_1.css', cssSheet=':root {
   --background: oklch(1.0000 0 0);
   --foreground: oklch(0.1448 0 0);
   --card: oklch(1.0000 0 0);
@@ -589,8 +801,8 @@ This looks great, lets do it
 <assistant>
 Great, I will generate the html file for each UI component and then combine them together to form a single html file
 
-write(file_path='design_iterations/chat_ui.css', content='...')
-write(file_path='design_iterations/chat_ui.html', content='...')
+write(file_path='.superdesign/design_iterations/chat_ui.css', content='...')
+write(file_path='.superdesign/design_iterations/chat_ui.html', content='...')
 
 I've created the html design, please reveiw and let me know if you need any changes
 
@@ -618,6 +830,16 @@ I've created the html design, please reveiw and let me know if you need any chan
         onMessage?: (message: any) => void
     ): Promise<any[]> {
         this.outputChannel.appendLine('=== CUSTOM AGENT QUERY CALLED ===');
+        const requestHistoryId = options?.requestHistoryId as string | undefined;
+        const requestInputForHistory = options?.requestInputForHistory as string | undefined;
+        const requestInfo = this.getResolvedRequestInfo();
+        const requestStartedAt = Date.now();
+        let finishReason = 'unknown';
+        let tokenUsage: AIRequestTokenUsage | undefined;
+        let responseHeaders: Record<string, string> | undefined;
+        let currentStepIndex = -1;
+        let currentStepStartedAt = requestStartedAt;
+        let currentStepText = '';
         
         // Determine which input format we're using
         const usingConversationHistory = !!conversationHistory && conversationHistory.length > 0;
@@ -632,6 +854,22 @@ I've created the html design, please reveiw and let me know if you need any chan
         
         this.outputChannel.appendLine(`Query options: ${JSON.stringify(options, null, 2)}`);
         this.outputChannel.appendLine(`Streaming enabled: ${!!onMessage}`);
+        const designWritesAllowed = true;
+        this.outputChannel.appendLine(`Design write tools enabled: ${designWritesAllowed}`);
+
+        if (requestHistoryId) {
+            const requestInput = conversationHistory && conversationHistory.length > 0
+                ? serializeMessagesForHistory(conversationHistory)
+                : (prompt || '');
+
+            AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                provider: requestInfo.provider,
+                model: requestInfo.model,
+                baseUrl: requestInfo.baseUrl,
+                requestInput,
+                resultSummary: '请求中'
+            });
+        }
 
         if (!this.isInitialized) {
             await this.setupWorkingDirectory();
@@ -642,6 +880,8 @@ I've created the html design, please reveiw and let me know if you need any chan
         const aiModelProvider = config.get<string>('aiModelProvider', 'anthropic');
         const llmProvider = config.get<string>('llmProvider', 'claude-api');
         
+        const systemPrompt = this.getSystemPrompt();
+
         // If either setting is set to claude-code, use ClaudeCodeService
         if (aiModelProvider === 'claude-code' || llmProvider === 'claude-code') {
             this.outputChannel.appendLine('Using ClaudeCodeService for claude-code provider');
@@ -667,6 +907,31 @@ I've created the html design, please reveiw and let me know if you need any chan
                 abortController,
                 onMessage
             );
+
+            if (requestHistoryId) {
+                AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                    status: 'success',
+                    completedAt: Date.now(),
+                    durationMs: Date.now() - requestStartedAt,
+                    provider: requestInfo.provider,
+                    model: requestInfo.model,
+                    baseUrl: requestInfo.baseUrl,
+                    responseOutput: claudeMessages.map(msg => {
+                        if (typeof msg.message === 'string') {
+                            return msg.message;
+                        }
+                        if (typeof msg.content === 'string') {
+                            return msg.content;
+                        }
+                        if (typeof msg.result === 'string') {
+                            return msg.result;
+                        }
+                        return '';
+                    }).filter(Boolean).join('\n\n'),
+                    resultSummary: '请求成功',
+                    finishReason: 'completed'
+                });
+            }
             
             // Convert LLMMessages to expected format
             return claudeMessages.map(msg => ({
@@ -693,26 +958,28 @@ I've created the html design, please reveiw and let me know if you need any chan
                 outputChannel: this.outputChannel,
                 abortController: abortController,
                 allowedWriteRoots: ['design_iterations', '.superdesign/design_iterations'],
-                shellMode: 'read-only'
+                shellMode: 'workspace'
             };
 
             // Create tools with context
             const tools = {
                 read: createReadTool(executionContext),
-                write: createWriteTool(executionContext),
-                edit: createEditTool(executionContext),
-                multiedit: createMultieditTool(executionContext),
                 glob: createGlobTool(executionContext),
                 grep: createGrepTool(executionContext),
                 ls: createLsTool(executionContext),
                 bash: createBashTool(executionContext),
-                generateTheme: createThemeTool(executionContext)
+                ...(designWritesAllowed ? {
+                    write: createWriteTool(executionContext),
+                    edit: createEditTool(executionContext),
+                    multiedit: createMultieditTool(executionContext),
+                    generateTheme: createThemeTool(executionContext)
+                } : {})
             };
 
             // Prepare AI SDK input based on available data
             const streamTextConfig: any = {
                 model: this.getModel(),
-                system: this.getSystemPrompt(),
+                system: systemPrompt,
                 tools: tools,
                 toolCallStreaming: true,
                 maxSteps: 10, // Enable multi-step reasoning with tools
@@ -758,6 +1025,7 @@ I've created the html design, please reveiw and let me know if you need any chan
                     case 'text-delta':
                         // Handle streaming text (assistant message chunks) - CoreMessage format
                         messageBuffer += chunk.textDelta;
+                        currentStepText += chunk.textDelta;
                         
                         const textMessage: CoreMessage = {
                             role: 'assistant',
@@ -770,6 +1038,14 @@ I've created the html design, please reveiw and let me know if you need any chan
 
                     case 'finish':
                         // Final result message - CoreMessage format
+                        finishReason = chunk.finishReason || 'completed';
+                        responseHeaders = (chunk.response?.headers && typeof chunk.response.headers === 'object')
+                            ? chunk.response.headers
+                            : responseHeaders;
+                        tokenUsage = this.mergeTokenUsage(
+                            this.extractTokenUsage(chunk),
+                            this.extractTokenUsageFromHeaders(responseHeaders)
+                        ) || tokenUsage;
                         this.outputChannel.appendLine(`===Stream finished with reason: ${chunk.finishReason}`);
                         this.outputChannel.appendLine(`${JSON.stringify(chunk)}`);
                         this.outputChannel.appendLine(`========================================`);
@@ -878,6 +1154,9 @@ I've created the html design, please reveiw and let me know if you need any chan
                     case 'step-start':
                         // Log step start with details
                         const stepStart = chunk as any;
+                        currentStepIndex = typeof stepStart.currentStep === 'number' ? stepStart.currentStep : currentStepIndex + 1;
+                        currentStepStartedAt = Date.now();
+                        currentStepText = '';
                         this.outputChannel.appendLine(`====Step ${stepStart.step || 'unknown'} started: ${stepStart.stepType || 'reasoning'}`);
                         this.outputChannel.appendLine(`${JSON.stringify(chunk)}`);
                         this.outputChannel.appendLine(`========================================`);
@@ -886,6 +1165,29 @@ I've created the html design, please reveiw and let me know if you need any chan
                     case 'step-finish':
                         // Log step completion with details
                         const stepFinish = chunk as any;
+                        const stepResponseHeaders = (stepFinish.response?.headers && typeof stepFinish.response.headers === 'object')
+                            ? stepFinish.response.headers
+                            : undefined;
+                        const stepTokenUsage = this.mergeTokenUsage(
+                            this.extractTokenUsage(stepFinish),
+                            this.extractTokenUsageFromHeaders(stepResponseHeaders)
+                        );
+                        AIRequestHistoryService.getInstance().addEntry({
+                            status: stepFinish.finishReason === 'error' ? 'error' : 'success',
+                            requestKind: 'roundtrip',
+                            provider: requestInfo.provider,
+                            model: requestInfo.model,
+                            baseUrl: requestInfo.baseUrl,
+                            requestInput: stepFinish.request?.body || requestInputForHistory || prompt || '',
+                            responseOutput: currentStepText || undefined,
+                            resultSummary: stepFinish.finishReason === 'error' ? '请求失败' : `第 ${currentStepIndex + 1} 次请求`,
+                            finishReason: stepFinish.finishReason,
+                            durationMs: Date.now() - currentStepStartedAt,
+                            tokenUsage: stepTokenUsage,
+                            responseHeaders: stepResponseHeaders,
+                            completedAt: Date.now(),
+                            httpStatus: this.asFiniteNumber(Number(this.getHeaderValue(stepResponseHeaders, [':status', 'status'])))
+                        });
                         this.outputChannel.appendLine(`====Step ${stepFinish.step || 'unknown'} finished: ${stepFinish.stepType || 'reasoning'} (${stepFinish.finishReason || 'completed'})`);
                         this.outputChannel.appendLine(`${JSON.stringify(chunk)}`);
                         this.outputChannel.appendLine(`========================================`);
@@ -918,17 +1220,87 @@ I've created the html design, please reveiw and let me know if you need any chan
                 }
             }
 
+            responseHeaders = (await result.response)?.headers || responseHeaders;
+            tokenUsage = this.mergeTokenUsage(
+                await result.usage.then(usage => this.extractTokenUsage({ usage })).catch(() => undefined),
+                this.extractTokenUsageFromHeaders(responseHeaders)
+            ) || tokenUsage;
+
             this.outputChannel.appendLine(`Query completed successfully. Total messages: ${responseMessages.length}`);
             this.outputChannel.appendLine(`Complete response: "${messageBuffer}"`);
+
+            if (requestHistoryId) {
+                AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                    status: 'success',
+                    completedAt: Date.now(),
+                    durationMs: Date.now() - requestStartedAt,
+                    provider: requestInfo.provider,
+                    model: requestInfo.model,
+                    baseUrl: requestInfo.baseUrl,
+                    responseOutput: messageBuffer || serializeMessagesForHistory(responseMessages as CoreMessage[]),
+                    resultSummary: '请求成功',
+                    finishReason,
+                    tokenUsage,
+                    responseHeaders
+                });
+            }
             
             return responseMessages;
 
         } catch (error) {
+            const isCancellationLike = this.isCancellationLikeError(error);
             this.outputChannel.appendLine(`Custom Agent query failed: ${error}`);
             this.outputChannel.appendLine(`Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
+
+            if (isCancellationLike && abortController?.signal.aborted) {
+                this.outputChannel.appendLine('Cancellation-like error received after user stop; returning collected response without surfacing an error.');
+                return responseMessages;
+            }
+
+            if (isCancellationLike && !abortController?.signal.aborted && responseMessages.length > 0) {
+                this.outputChannel.appendLine('Cancellation-like error received after partial response; preserving collected response instead of surfacing a hard error.');
+
+                if (requestHistoryId) {
+                    AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                        status: 'success',
+                        completedAt: Date.now(),
+                        durationMs: Date.now() - requestStartedAt,
+                        provider: requestInfo.provider,
+                        model: requestInfo.model,
+                        baseUrl: requestInfo.baseUrl,
+                        responseOutput: messageBuffer || serializeMessagesForHistory(responseMessages as CoreMessage[]),
+                        resultSummary: '请求成功（兼容取消信号）',
+                        finishReason: finishReason === 'unknown' ? 'cancelled-after-response' : finishReason,
+                        tokenUsage,
+                        responseHeaders
+                    });
+                }
+
+                return responseMessages;
+            }
+
+            if (requestHistoryId && !abortController?.signal.aborted) {
+                const errorInfo = extractErrorInfo(error);
+                AIRequestHistoryService.getInstance().updateEntry(requestHistoryId, {
+                    status: 'error',
+                    completedAt: Date.now(),
+                    durationMs: Date.now() - requestStartedAt,
+                    provider: requestInfo.provider,
+                    model: requestInfo.model,
+                    baseUrl: requestInfo.baseUrl,
+                    responseOutput: messageBuffer || undefined,
+                    resultSummary: '请求失败',
+                    finishReason,
+                    tokenUsage,
+                    errorMessage: errorInfo.message,
+                    errorResponseBody: errorInfo.responseBody,
+                    httpStatus: errorInfo.httpStatus,
+                    responseHeaders
+                });
+            }
             
             // Send error message if streaming callback is available
-            if (onMessage) {
+            if (onMessage && !isCancellationLike) {
                 const errorMessage = {
                     type: 'result',
                     subtype: 'error',

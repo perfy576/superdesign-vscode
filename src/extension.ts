@@ -5,6 +5,7 @@ import { CustomAgentService } from './services/customAgentService';
 import { ChatSidebarProvider } from './providers/chatSidebarProvider';
 import { Logger, LogLevel } from './services/logger';
 import * as path from 'path';
+import { AIRequestHistoryPanel } from './panels/aiRequestHistoryPanel';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -443,7 +444,9 @@ You should always follow workflow below unless user explicitly ask you to do som
 ### 1. Layout design
 Output type: Just text
 Think through how should the layout of interface look like, what are different UI components
-And present the layout in ASCII wireframe format, here are the guidelines of good ASCII wireframe, you can do ASCII art too for more custom layout or graphic design
+Present the layout as concise Markdown sections and bullet lists.
+Do NOT use ASCII wireframes, pseudo-tables, or box drawing in chat.
+If a wireframe is needed, generate it as an actual HTML design artifact instead of chat ASCII art.
 
 ### 2. Theme design
 Output type: Tool call
@@ -488,50 +491,15 @@ Let's think through the layout design for an AI chat UI. Here are the key compon
 
 ## Layout Structure Options
 
-┌─────────────────────────────────────┐
-│ ☰          HEADER BAR            + │
-├─────────────────────────────────────┤
-│                                     │
-│ ┌─────────────────────────────┐     │
-│ │     AI Message Bubble       │     │
-│ └─────────────────────────────┘     │
-│                                     │
-│     ┌─────────────────────────────┐ │
-│     │     User Message Bubble     │ │
-│     └─────────────────────────────┘ │
-│                                     │
-│ ┌─────────────────────────────┐     │
-│ │     AI Message Bubble       │     │
-│ └─────────────────────────────┘     │
-│                                     │
-│              [CHAT AREA]            │
-│                                     │
-├─────────────────────────────────────┤
-│ [Text Input Field]           [Send] │
-└─────────────────────────────────────┘
+### Option A
+- Top header with menu on the left and primary actions on the right
+- Central scrollable chat column with alternating AI and user bubbles
+- Bottom composer bar with send button embedded at the right
 
-When hamburger (☰) is clicked, sidebar slides out:
-┌──────────────┬─────────────────────────────────────┐
-│   SIDEBAR    │ ☰           HEADER BAR           + │
-│ ┌──────────┐ ├─────────────────────────────────────┤
-│ │ Chat 1   │ │                                     │
-│ │ Chat 2   │ │ ┌─────────────────────────────┐     │
-│ │ Chat 3   │ │ │     AI Message Bubble       │     │
-│ │ + New    │ │ └─────────────────────────────┘     │
-│ └──────────┘ │                                     │
-│              │     ┌─────────────────────────────┐ │
-│              │     │     User Message Bubble     │ │
-│              │     └─────────────────────────────┘ │
-│              │                                     │
-│              │ ┌─────────────────────────────┐     │
-│              │ │     AI Message Bubble       │     │
-│              │ └─────────────────────────────┘     │
-│              │                                     │
-│              │              [CHAT AREA]            │
-│              │                                     │
-│              ├─────────────────────────────────────┤
-│              │ [Text Input Field]           [Send] │
-└──────────────┘─────────────────────────────────────┘
+### Sidebar Interaction
+- Default state keeps the sidebar collapsed
+- Clicking the menu button reveals the conversation list from the left
+- The main chat area remains primary and should not be visually crowded by navigation
 
 Would you like to go ahead with this layout & UI interaction or needs any modification?
 </assistant>
@@ -656,6 +624,7 @@ IMPORTANT RULES:
 1. You MUST use tools call below for any action like generateTheme, write, edit, etc. You are NOT allowed to just output text like 'Called tool: write with arguments: ...' or <tool-call>...</tool-call>; MUST USE TOOL CALL (This is very important!!)
 2. You MUST confirm the layout, and then theme style, and then animation
 3. You MUST use .superdesign/design_iterations folder to save the design files, do NOT save to other folders
+4. In chat responses, do NOT use ASCII box drawing, pseudo-tables, or wireframe art. Use Markdown lists and headings instead.
 4. You MUST create follow the workflow above
 
 # Available Tools
@@ -1356,6 +1325,10 @@ export function activate(context: vscode.ExtensionContext) {
 		});
 	});
 
+	const openAIRequestHistoryDisposable = vscode.commands.registerCommand('superdesign.openAIRequestHistory', () => {
+		AIRequestHistoryPanel.createOrShow(context.extensionUri);
+	});
+
 	// Register reset welcome command
 	const resetWelcomeDisposable = vscode.commands.registerCommand('superdesign.resetWelcome', () => {
 		sidebarProvider.sendMessage({
@@ -1453,6 +1426,7 @@ export function activate(context: vscode.ExtensionContext) {
 		clearChatDisposable,
 		newConversationDisposable,
 		showConversationHistoryDisposable,
+		openAIRequestHistoryDisposable,
 		resetWelcomeDisposable,
 		initializeProjectDisposable,
 		openSettingsDisposable,
@@ -1642,7 +1616,7 @@ class SuperdesignCanvasPanel {
 	private readonly _extensionUri: vscode.Uri;
 	private readonly _sidebarProvider: ChatSidebarProvider;
 	private _disposables: vscode.Disposable[] = [];
-	private _fileWatcher: vscode.FileSystemWatcher | undefined;
+	private _fileWatchers: vscode.FileSystemWatcher[] = [];
 
 	public static createOrShow(extensionUri: vscode.Uri, sidebarProvider: ChatSidebarProvider) {
 		const column = vscode.window.activeTextEditor?.viewColumn;
@@ -1711,11 +1685,9 @@ class SuperdesignCanvasPanel {
 	public dispose() {
 		SuperdesignCanvasPanel.currentPanel = undefined;
 		
-		// Dispose of file watcher
-		if (this._fileWatcher) {
-			this._fileWatcher.dispose();
-			this._fileWatcher = undefined;
-		}
+		// Dispose of file watchers
+		this._fileWatchers.forEach(watcher => watcher.dispose());
+		this._fileWatchers = [];
 		
 		this._panel.dispose();
 		while (this._disposables.length) {
@@ -1732,54 +1704,87 @@ class SuperdesignCanvasPanel {
 			return;
 		}
 
-		// Watch for changes in .superdesign/design_iterations/*.html, *.svg, and *.css
-		const pattern = new vscode.RelativePattern(
-			workspaceFolder, 
-			'.superdesign/design_iterations/**/*.{html,svg,css}'
+		const watchedDirectories = [
+			'.superdesign/design_iterations/**/*.{html,svg,css}',
+			'design_iterations/**/*.{html,svg,css}'
+		];
+
+		const notifyFileChange = (uri: vscode.Uri, changeType: 'created' | 'modified' | 'deleted') => {
+			Logger.debug(`Design file ${changeType}: ${uri.fsPath}`);
+			this._panel.webview.postMessage({
+				command: 'fileChanged',
+				data: {
+					fileName: uri.fsPath.split('/').pop() || '',
+					changeType
+				}
+			});
+		};
+
+		this._fileWatchers = watchedDirectories.map(pattern => {
+			const watcher = vscode.workspace.createFileSystemWatcher(
+				new vscode.RelativePattern(workspaceFolder, pattern),
+				false,
+				false,
+				false
+			);
+
+			watcher.onDidCreate(uri => notifyFileChange(uri, 'created'));
+			watcher.onDidChange(uri => notifyFileChange(uri, 'modified'));
+			watcher.onDidDelete(uri => notifyFileChange(uri, 'deleted'));
+
+			return watcher;
+		});
+	}
+
+	private async _readDesignFilesFromFolder(designFolder: vscode.Uri, source: 'primary' | 'legacy') {
+		try {
+			await vscode.workspace.fs.stat(designFolder);
+		} catch {
+			return [];
+		}
+
+		const files = await vscode.workspace.fs.readDirectory(designFolder);
+		const designFiles = files.filter(([name, type]) =>
+			type === vscode.FileType.File && (
+				name.toLowerCase().endsWith('.html') ||
+				name.toLowerCase().endsWith('.svg')
+			)
 		);
 
-		this._fileWatcher = vscode.workspace.createFileSystemWatcher(
-			pattern,
-			false, // Don't ignore create events
-			false, // Don't ignore change events  
-			false  // Don't ignore delete events
+		const loadedFiles = await Promise.all(
+			designFiles.map(async ([fileName, _]) => {
+				const filePath = vscode.Uri.joinPath(designFolder, fileName);
+
+				try {
+					const [stat, content] = await Promise.all([
+						vscode.workspace.fs.stat(filePath),
+						vscode.workspace.fs.readFile(filePath)
+					]);
+
+					const fileType = fileName.toLowerCase().endsWith('.svg') ? 'svg' : 'html';
+					let htmlContent = Buffer.from(content).toString('utf8');
+
+					if (fileType === 'html') {
+						htmlContent = await this._inlineExternalCSS(htmlContent, designFolder);
+					}
+
+					return {
+						name: fileName,
+						path: filePath.fsPath,
+						content: htmlContent,
+						size: stat.size,
+						modified: new Date(stat.mtime),
+						fileType,
+						source
+					};
+				} catch (fileError) {
+					Logger.error(`Failed to read file ${fileName}: ${fileError}`);
+					return null;
+				}
+			})
 		);
 
-		// Handle file creation
-		this._fileWatcher.onDidCreate((uri) => {
-			Logger.debug(`Design file created: ${uri.fsPath}`);
-			this._panel.webview.postMessage({
-				command: 'fileChanged',
-				data: {
-					fileName: uri.fsPath.split('/').pop() || '',
-					changeType: 'created'
-				}
-			});
-		});
-
-		// Handle file modification
-		this._fileWatcher.onDidChange((uri) => {
-			Logger.debug(`Design file modified: ${uri.fsPath}`);
-			this._panel.webview.postMessage({
-				command: 'fileChanged',
-				data: {
-					fileName: uri.fsPath.split('/').pop() || '',
-					changeType: 'modified'
-				}
-			});
-		});
-
-		// Handle file deletion
-		this._fileWatcher.onDidDelete((uri) => {
-			Logger.debug(`Design file deleted: ${uri.fsPath}`);
-			this._panel.webview.postMessage({
-				command: 'fileChanged',
-				data: {
-					fileName: uri.fsPath.split('/').pop() || '',
-					changeType: 'deleted'
-				}
-			});
-		});
+		return loadedFiles.filter(file => file !== null);
 	}
 
 	private _update() {
@@ -1848,70 +1853,50 @@ class SuperdesignCanvasPanel {
 		}
 
 		try {
-			const designFolder = vscode.Uri.joinPath(workspaceFolder.uri, '.superdesign', 'design_iterations');
-			
-			// Check if the design_files folder exists
+			const primaryDesignFolder = vscode.Uri.joinPath(workspaceFolder.uri, '.superdesign', 'design_iterations');
+			const legacyDesignFolder = vscode.Uri.joinPath(workspaceFolder.uri, 'design_iterations');
+
+			// Ensure the primary design folder exists
 			try {
-				await vscode.workspace.fs.stat(designFolder);
-			} catch (error) {
-				// Folder doesn't exist, create it
+				await vscode.workspace.fs.stat(primaryDesignFolder);
+			} catch {
 				try {
-					await vscode.workspace.fs.createDirectory(designFolder);
+					await vscode.workspace.fs.createDirectory(primaryDesignFolder);
 					Logger.info('Created .superdesign/design_iterations directory');
 				} catch (createError) {
 					this._panel.webview.postMessage({
 						command: 'error',
-						data: { error: `Failed to create design_files directory: ${createError}` }
+						data: { error: `Failed to create design directory: ${createError}` }
 					});
 					return;
 				}
 			}
 
-			// Read all files in the directory
-			const files = await vscode.workspace.fs.readDirectory(designFolder);
-			const designFiles = files.filter(([name, type]) => 
-				type === vscode.FileType.File && (
-					name.toLowerCase().endsWith('.html') || 
-					name.toLowerCase().endsWith('.svg')
-				)
+			const [primaryFiles, legacyFiles] = await Promise.all([
+				this._readDesignFilesFromFolder(primaryDesignFolder, 'primary'),
+				this._readDesignFilesFromFolder(legacyDesignFolder, 'legacy')
+			]);
+
+			const dedupedFiles = new Map<string, any>();
+			[...primaryFiles, ...legacyFiles].forEach(file => {
+				if (!file) {
+					return;
+				}
+
+				const existingFile = dedupedFiles.get(file.name);
+				if (!existingFile) {
+					dedupedFiles.set(file.name, file);
+					return;
+				}
+
+				if (existingFile.source === 'legacy' && file.source === 'primary') {
+					dedupedFiles.set(file.name, file);
+				}
+			});
+
+			const validFiles = Array.from(dedupedFiles.values()).sort((a, b) =>
+				b.modified.getTime() - a.modified.getTime()
 			);
-
-			const loadedFiles = await Promise.all(
-				designFiles.map(async ([fileName, _]) => {
-					const filePath = vscode.Uri.joinPath(designFolder, fileName);
-					
-					try {
-						// Read file stats and content
-						const [stat, content] = await Promise.all([
-							vscode.workspace.fs.stat(filePath),
-							vscode.workspace.fs.readFile(filePath)
-						]);
-
-						const fileType = fileName.toLowerCase().endsWith('.svg') ? 'svg' : 'html';
-						let htmlContent = Buffer.from(content).toString('utf8');
-						
-						// For HTML files, inline any external CSS files
-						if (fileType === 'html') {
-							htmlContent = await this._inlineExternalCSS(htmlContent, designFolder);
-						}
-						
-						return {
-							name: fileName,
-							path: filePath.fsPath,
-							content: htmlContent,
-							size: stat.size,
-							modified: new Date(stat.mtime),
-							fileType
-						};
-					} catch (fileError) {
-						Logger.error(`Failed to read file ${fileName}: ${fileError}`);
-						return null;
-					}
-				})
-			);
-
-			// Filter out any failed file reads
-			const validFiles = loadedFiles.filter(file => file !== null);
 
 			Logger.info(`Loaded ${validFiles.length} design files (HTML & SVG)`);
 			
